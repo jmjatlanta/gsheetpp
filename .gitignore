@@ -1,3 +1,4 @@
 build/
 *.json.key
 service_account*.json
+.DS_Store

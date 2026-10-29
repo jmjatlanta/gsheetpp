@@ -193,6 +193,14 @@ void test_bad_private_key() {
 
 void test_client_requires_credentials() {
     CHECK(throws<gsheetpp::Error>([] { gsheetpp::SheetsClient client(nullptr); }));
+    CHECK(throws<gsheetpp::Error>([] { gsheetpp::DriveClient client(nullptr); }));
+}
+
+void test_drive_query_quoting() {
+    using gsheetpp::DriveClient;
+    CHECK(DriveClient::quote("GoShox") == "'GoShox'");
+    CHECK(DriveClient::quote("Bob's sheet") == "'Bob\\'s sheet'");
+    CHECK(DriveClient::quote("a\\b") == "'a\\\\b'");
 }
 
 } // namespace
@@ -203,6 +211,7 @@ int main() {
     test_jwt_assertion();
     test_bad_private_key();
     test_client_requires_credentials();
+    test_drive_query_quoting();
 
     if (g_failures) {
         std::cerr << g_failures << " check(s) failed\n";

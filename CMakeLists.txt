@@ -36,7 +36,9 @@ target_include_directories(gsheetpp_rapidjson SYSTEM INTERFACE "${RAPIDJSON_DIR}
 # --- Library ----------------------------------------------------------------
 
 add_library(gsheetpp
+    src/api_client.cpp
     src/base64.cpp
+    src/drive_client.cpp
     src/http_client.cpp
     src/jwt.cpp
     src/service_account_credentials.cpp

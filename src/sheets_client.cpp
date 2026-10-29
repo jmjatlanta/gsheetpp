@@ -1,7 +1,7 @@
 #include "gsheetpp/sheets_client.h"
 
 #include "gsheetpp/error.h"
-#include "http_client.h"
+#include "api_client.h"
 #include "json_util.h"
 
 namespace gsheetpp {
@@ -75,50 +75,24 @@ std::string serialize_value_range(const std::string& range, const Grid& values) 
 } // namespace
 
 struct SheetsClient::Impl {
-    std::shared_ptr<Credentials> credentials;
+    explicit Impl(std::shared_ptr<Credentials> credentials)
+        : api(std::move(credentials), "Sheets API") {}
+
+    detail::ApiClient api;
     std::string base_url = kDefaultBaseUrl;
-    detail::HttpClient http;
 
     std::string spreadsheet_url(const std::string& id) {
-        return base_url + "/spreadsheets/" + http.escape(id);
+        return base_url + "/spreadsheets/" + api.escape(id);
     }
 
-    /// Sends an authorized request and returns the parsed JSON body.
-    /// Throws HttpError for non-2xx responses.
     rapidjson::Document call(const std::string& method, const std::string& url,
                              const std::string& body = {}) {
-        std::vector<std::string> headers{"Authorization: Bearer " + credentials->access_token(),
-                                         "Accept: application/json"};
-        if (method != "GET")
-            headers.emplace_back("Content-Type: application/json");
-
-        detail::HttpResponse resp = http.request(method, url, headers, body);
-
-        rapidjson::Document doc;
-        doc.Parse(resp.body.data(), resp.body.size());
-
-        if (resp.status < 200 || resp.status >= 300) {
-            std::string msg = "Sheets API " + method + " returned HTTP " +
-                              std::to_string(resp.status);
-            if (!doc.HasParseError() && doc.IsObject() && doc.HasMember("error")) {
-                std::string detail_msg = detail::json_string(doc["error"], "message");
-                if (!detail_msg.empty())
-                    msg += ": " + detail_msg;
-            }
-            throw HttpError(msg, resp.status, std::move(resp.body));
-        }
-        if (doc.HasParseError() || !doc.IsObject())
-            throw HttpError("Sheets API returned invalid JSON", resp.status, std::move(resp.body));
-        return doc;
+        return api.call(method, url, body);
     }
 };
 
 SheetsClient::SheetsClient(std::shared_ptr<Credentials> credentials)
-    : impl_(std::make_unique<Impl>()) {
-    if (!credentials)
-        throw Error("SheetsClient requires non-null credentials");
-    impl_->credentials = std::move(credentials);
-}
+    : impl_(std::make_unique<Impl>(std::move(credentials))) {}
 
 SheetsClient::~SheetsClient() = default;
 SheetsClient::SheetsClient(SheetsClient&&) noexcept = default;
@@ -135,7 +109,7 @@ Spreadsheet SheetsClient::get_spreadsheet(const std::string& spreadsheet_id) {
         "spreadsheetId,spreadsheetUrl,properties(title,locale,timeZone),"
         "sheets.properties(sheetId,title,index,gridProperties)";
     auto doc = impl_->call("GET", impl_->spreadsheet_url(spreadsheet_id) +
-                                      "?fields=" + impl_->http.escape(fields));
+                                      "?fields=" + impl_->api.escape(fields));
 
     Spreadsheet s;
     s.spreadsheet_id = detail::json_string(doc, "spreadsheetId");
@@ -167,7 +141,7 @@ Spreadsheet SheetsClient::get_spreadsheet(const std::string& spreadsheet_id) {
 
 ValueRange SheetsClient::get_values(const std::string& spreadsheet_id, const std::string& range) {
     auto doc = impl_->call("GET", impl_->spreadsheet_url(spreadsheet_id) + "/values/" +
-                                      impl_->http.escape(range));
+                                      impl_->api.escape(range));
     return parse_value_range(doc);
 }
 
@@ -179,7 +153,7 @@ std::vector<ValueRange> SheetsClient::batch_get_values(const std::string& spread
     char sep = '?';
     for (const auto& r : ranges) {
         url += sep;
-        url += "ranges=" + impl_->http.escape(r);
+        url += "ranges=" + impl_->api.escape(r);
         sep = '&';
     }
     auto doc = impl_->call("GET", url);
@@ -197,7 +171,7 @@ UpdateResult SheetsClient::update_values(const std::string& spreadsheet_id,
                                          ValueInputOption option) {
     auto doc = impl_->call("PUT",
                            impl_->spreadsheet_url(spreadsheet_id) + "/values/" +
-                               impl_->http.escape(range) +
+                               impl_->api.escape(range) +
                                "?valueInputOption=" + to_string(option),
                            serialize_value_range(range, values));
     return parse_update_result(doc);
@@ -208,7 +182,7 @@ UpdateResult SheetsClient::append_values(const std::string& spreadsheet_id,
                                          ValueInputOption option) {
     auto doc = impl_->call("POST",
                            impl_->spreadsheet_url(spreadsheet_id) + "/values/" +
-                               impl_->http.escape(range) + ":append?valueInputOption=" +
+                               impl_->api.escape(range) + ":append?valueInputOption=" +
                                to_string(option) + "&insertDataOption=INSERT_ROWS",
                            serialize_value_range(range, values));
     if (doc.HasMember("updates"))
@@ -218,7 +192,7 @@ UpdateResult SheetsClient::append_values(const std::string& spreadsheet_id,
 
 void SheetsClient::clear_values(const std::string& spreadsheet_id, const std::string& range) {
     impl_->call("POST",
-                impl_->spreadsheet_url(spreadsheet_id) + "/values/" + impl_->http.escape(range) +
+                impl_->spreadsheet_url(spreadsheet_id) + "/values/" + impl_->api.escape(range) +
                     ":clear",
                 "{}");
 }

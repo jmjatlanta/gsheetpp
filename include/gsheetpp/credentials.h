@@ -4,11 +4,15 @@
 
 namespace gsheetpp {
 
-/// Common OAuth2 scopes for the Sheets API.
+/// Common OAuth2 scopes for the Sheets and Drive APIs.
 namespace scopes {
 inline constexpr const char* kSpreadsheets = "https://www.googleapis.com/auth/spreadsheets";
 inline constexpr const char* kSpreadsheetsReadOnly =
     "https://www.googleapis.com/auth/spreadsheets.readonly";
+/// Lets DriveClient see file and folder names, but not file contents.
+inline constexpr const char* kDriveMetadataReadOnly =
+    "https://www.googleapis.com/auth/drive.metadata.readonly";
+inline constexpr const char* kDriveReadOnly = "https://www.googleapis.com/auth/drive.readonly";
 } // namespace scopes
 
 /// Source of OAuth2 bearer tokens for Google APIs.
