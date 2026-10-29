@@ -21,7 +21,7 @@ gtest_discover_tests(gsheetpp_tests PROPERTIES LABELS unit)
 
 # Integration tests: these talk to the real Sheets API using the service account
 # key in tests/test_resources (git-ignored). They are skipped if the key is absent.
-add_executable(gsheetpp_integration_tests sheet_read_test.cpp drive_test.cpp)
+add_executable(gsheetpp_integration_tests sheet_read_test.cpp sheet_edit_test.cpp drive_test.cpp)
 target_link_libraries(gsheetpp_integration_tests PRIVATE gsheetpp::gsheetpp GTest::gtest_main)
 target_compile_definitions(gsheetpp_integration_tests PRIVATE
     GSHEETPP_TEST_RESOURCES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/test_resources")

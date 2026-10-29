@@ -2,6 +2,7 @@
 
 #include "base64.h"
 #include "json_util.h"
+#include "sheets_json.h"
 
 #include <gsheetpp/gsheetpp.h>
 
@@ -14,6 +15,7 @@
 #include <chrono>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -197,6 +199,81 @@ TEST(DriveClient, QuotesQueryStrings) {
     EXPECT_EQ(DriveClient::quote("GSheetPP"), "'GSheetPP'");
     EXPECT_EQ(DriveClient::quote("Bob's sheet"), "'Bob\\'s sheet'");
     EXPECT_EQ(DriveClient::quote("a\\b"), "'a\\\\b'");
+}
+
+TEST(Spreadsheet, FindsSheetByTitle) {
+    gsheetpp::Spreadsheet s;
+    s.sheets = {{0, "Orders", 0, 1000, 26}, {42, "Sim1", 1, 1000, 27}};
+    ASSERT_NE(s.find_sheet("Sim1"), nullptr);
+    EXPECT_EQ(s.find_sheet("Sim1")->sheet_id, 42);
+    EXPECT_EQ(s.find_sheet("Sim2"), nullptr);
+}
+
+TEST(SheetsJson, NamesRenderOptions) {
+    using namespace gsheetpp;
+    EXPECT_STREQ(detail::to_string(ValueRenderOption::Formatted), "FORMATTED_VALUE");
+    EXPECT_STREQ(detail::to_string(ValueRenderOption::Unformatted), "UNFORMATTED_VALUE");
+    EXPECT_STREQ(detail::to_string(ValueRenderOption::Formula), "FORMULA");
+    EXPECT_STREQ(detail::to_string(DateTimeRenderOption::FormattedString), "FORMATTED_STRING");
+    EXPECT_STREQ(detail::to_string(DateTimeRenderOption::SerialNumber), "SERIAL_NUMBER");
+}
+
+TEST(SheetsJson, SerializesBatchUpdateValues) {
+    std::vector<gsheetpp::ValueRange> data{{"Orders!A2", {{"1", "Buy"}}}, {"Orders!A5", {{"2"}}}};
+    EXPECT_EQ(gsheetpp::detail::serialize_batch_update_values(data,
+                                                              gsheetpp::ValueInputOption::Raw),
+              R"({"valueInputOption":"RAW","data":[)"
+              R"({"range":"Orders!A2","majorDimension":"ROWS","values":[["1","Buy"]]},)"
+              R"({"range":"Orders!A5","majorDimension":"ROWS","values":[["2"]]}]})");
+}
+
+TEST(SheetsJson, SerializesAddAndDeleteSheet) {
+    EXPECT_EQ(gsheetpp::detail::serialize_add_sheet("Sim \"1\""),
+              R"({"requests":[{"addSheet":{"properties":{"title":"Sim \"1\""}}}]})");
+    EXPECT_EQ(gsheetpp::detail::serialize_delete_sheet(42),
+              R"({"requests":[{"deleteSheet":{"sheetId":42}}]})");
+}
+
+TEST(SheetsJson, NormalizesRowRangesBottomUp) {
+    using gsheetpp::RowRange;
+    auto ranges = gsheetpp::detail::normalize_row_ranges(
+        {{1, 2}, {7, 9}, {5, 5}, {3, 4}, {8, 10}, {4, 6}, {-1, 3}});
+    // {5,5} and {-1,3} are dropped; {3,4}, {4,6} merge; {7,9}, {8,10} merge.
+    ASSERT_EQ(ranges.size(), 3u);
+    EXPECT_EQ(ranges[0].start, 7);
+    EXPECT_EQ(ranges[0].end, 10);
+    EXPECT_EQ(ranges[1].start, 3);
+    EXPECT_EQ(ranges[1].end, 6);
+    EXPECT_EQ(ranges[2].start, 1);
+    EXPECT_EQ(ranges[2].end, 2);
+}
+
+TEST(SheetsJson, SerializesDeleteRows) {
+    EXPECT_EQ(gsheetpp::detail::serialize_delete_rows(7, {{1, 2}, {4, 6}}),
+              R"({"requests":[)"
+              R"({"deleteDimension":{"range":{"sheetId":7,"dimension":"ROWS","startIndex":4,"endIndex":6}}},)"
+              R"({"deleteDimension":{"range":{"sheetId":7,"dimension":"ROWS","startIndex":1,"endIndex":2}}}]})");
+    EXPECT_EQ(gsheetpp::detail::serialize_delete_rows(7, {{3, 3}}), "");
+}
+
+TEST(SheetsJson, ParsesSheetProperties) {
+    rapidjson::Document doc;
+    doc.Parse(R"({"sheetId":42,"title":"Sim1","index":2,)"
+              R"("gridProperties":{"rowCount":1000,"columnCount":27}})");
+    auto sp = gsheetpp::detail::parse_sheet_properties(doc);
+    EXPECT_EQ(sp.sheet_id, 42);
+    EXPECT_EQ(sp.title, "Sim1");
+    EXPECT_EQ(sp.index, 2);
+    EXPECT_EQ(sp.row_count, 1000);
+    EXPECT_EQ(sp.column_count, 27);
+}
+
+TEST(SheetsJson, ParsesUnformattedNumbers) {
+    rapidjson::Document doc;
+    doc.Parse(R"({"range":"A1:C1","values":[[1234.5,42,true]]})");
+    auto vr = gsheetpp::detail::parse_value_range(doc);
+    ASSERT_EQ(vr.values.size(), 1u);
+    EXPECT_EQ(vr.values[0], (gsheetpp::Row{"1234.5", "42", "true"}));
 }
 
 } // namespace

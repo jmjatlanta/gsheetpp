@@ -3,6 +3,7 @@
 #include "gsheetpp/error.h"
 #include "api_client.h"
 #include "json_util.h"
+#include "sheets_json.h"
 
 namespace gsheetpp {
 
@@ -10,69 +11,23 @@ namespace {
 
 constexpr const char* kDefaultBaseUrl = "https://sheets.googleapis.com/v4";
 
-const char* to_string(ValueInputOption option) {
-    switch (option) {
-    case ValueInputOption::Raw:
-        return "RAW";
-    case ValueInputOption::UserEntered:
-        return "USER_ENTERED";
-    }
-    return "USER_ENTERED";
-}
+using detail::parse_update_result;
+using detail::parse_value_range;
+using detail::to_string;
 
-Grid parse_grid(const rapidjson::Value& obj) {
-    Grid grid;
-    auto it = obj.FindMember("values");
-    if (it == obj.MemberEnd() || !it->value.IsArray())
-        return grid;  // the API omits "values" for empty ranges
-    grid.reserve(it->value.Size());
-    for (const auto& row : it->value.GetArray()) {
-        Row r;
-        if (row.IsArray()) {
-            r.reserve(row.Size());
-            for (const auto& cell : row.GetArray())
-                r.push_back(detail::json_scalar_to_string(cell));
-        }
-        grid.push_back(std::move(r));
-    }
-    return grid;
-}
-
-ValueRange parse_value_range(const rapidjson::Value& obj) {
-    return ValueRange{detail::json_string(obj, "range"), parse_grid(obj)};
-}
-
-UpdateResult parse_update_result(const rapidjson::Value& obj) {
-    UpdateResult r;
-    r.updated_range = detail::json_string(obj, "updatedRange");
-    r.updated_rows = detail::json_int(obj, "updatedRows");
-    r.updated_columns = detail::json_int(obj, "updatedColumns");
-    r.updated_cells = detail::json_int(obj, "updatedCells");
-    return r;
-}
-
-std::string serialize_value_range(const std::string& range, const Grid& values) {
-    rapidjson::StringBuffer buf;
-    rapidjson::Writer<rapidjson::StringBuffer> w(buf);
-    w.StartObject();
-    w.Key("range");
-    w.String(range.data(), static_cast<rapidjson::SizeType>(range.size()));
-    w.Key("majorDimension");
-    w.String("ROWS");
-    w.Key("values");
-    w.StartArray();
-    for (const auto& row : values) {
-        w.StartArray();
-        for (const auto& cell : row)
-            w.String(cell.data(), static_cast<rapidjson::SizeType>(cell.size()));
-        w.EndArray();
-    }
-    w.EndArray();
-    w.EndObject();
-    return {buf.GetString(), buf.GetSize()};
+std::string render_query(ValueRenderOption render, DateTimeRenderOption date_time_render) {
+    return std::string("valueRenderOption=") + to_string(render) +
+           "&dateTimeRenderOption=" + to_string(date_time_render);
 }
 
 } // namespace
+
+const SheetProperties* Spreadsheet::find_sheet(const std::string& title) const {
+    for (const auto& sheet : sheets)
+        if (sheet.title == title)
+            return &sheet;
+    return nullptr;
+}
 
 struct SheetsClient::Impl {
     explicit Impl(std::shared_ptr<Credentials> credentials)
@@ -88,6 +43,11 @@ struct SheetsClient::Impl {
     rapidjson::Document call(const std::string& method, const std::string& url,
                              const std::string& body = {}) {
         return api.call(method, url, body);
+    }
+
+    // spreadsheets:batchUpdate, for structural changes such as adding sheets.
+    rapidjson::Document batch_update(const std::string& spreadsheet_id, const std::string& body) {
+        return call("POST", spreadsheet_url(spreadsheet_id) + ":batchUpdate", body);
     }
 };
 
@@ -124,38 +84,31 @@ Spreadsheet SheetsClient::get_spreadsheet(const std::string& spreadsheet_id) {
         for (const auto& sheet : doc["sheets"].GetArray()) {
             if (!sheet.IsObject() || !sheet.HasMember("properties"))
                 continue;
-            const auto& p = sheet["properties"];
-            SheetProperties sp;
-            sp.sheet_id = detail::json_int(p, "sheetId");
-            sp.title = detail::json_string(p, "title");
-            sp.index = detail::json_int(p, "index");
-            if (p.IsObject() && p.HasMember("gridProperties")) {
-                sp.row_count = detail::json_int(p["gridProperties"], "rowCount");
-                sp.column_count = detail::json_int(p["gridProperties"], "columnCount");
-            }
-            s.sheets.push_back(std::move(sp));
+            s.sheets.push_back(detail::parse_sheet_properties(sheet["properties"]));
         }
     }
     return s;
 }
 
-ValueRange SheetsClient::get_values(const std::string& spreadsheet_id, const std::string& range) {
+ValueRange SheetsClient::get_values(const std::string& spreadsheet_id, const std::string& range,
+                                    ValueRenderOption render,
+                                    DateTimeRenderOption date_time_render) {
     auto doc = impl_->call("GET", impl_->spreadsheet_url(spreadsheet_id) + "/values/" +
-                                      impl_->api.escape(range));
+                                      impl_->api.escape(range) + "?" +
+                                      render_query(render, date_time_render));
     return parse_value_range(doc);
 }
 
 std::vector<ValueRange> SheetsClient::batch_get_values(const std::string& spreadsheet_id,
-                                                       const std::vector<std::string>& ranges) {
+                                                       const std::vector<std::string>& ranges,
+                                                       ValueRenderOption render,
+                                                       DateTimeRenderOption date_time_render) {
     if (ranges.empty())
         return {};
-    std::string url = impl_->spreadsheet_url(spreadsheet_id) + "/values:batchGet";
-    char sep = '?';
-    for (const auto& r : ranges) {
-        url += sep;
-        url += "ranges=" + impl_->api.escape(r);
-        sep = '&';
-    }
+    std::string url = impl_->spreadsheet_url(spreadsheet_id) + "/values:batchGet?" +
+                      render_query(render, date_time_render);
+    for (const auto& r : ranges)
+        url += "&ranges=" + impl_->api.escape(r);
     auto doc = impl_->call("GET", url);
 
     std::vector<ValueRange> result;
@@ -173,8 +126,24 @@ UpdateResult SheetsClient::update_values(const std::string& spreadsheet_id,
                            impl_->spreadsheet_url(spreadsheet_id) + "/values/" +
                                impl_->api.escape(range) +
                                "?valueInputOption=" + to_string(option),
-                           serialize_value_range(range, values));
+                           detail::serialize_value_range(range, values));
     return parse_update_result(doc);
+}
+
+std::vector<UpdateResult> SheetsClient::batch_update_values(const std::string& spreadsheet_id,
+                                                          const std::vector<ValueRange>& data,
+                                                          ValueInputOption option) {
+    if (data.empty())
+        return {};
+    auto doc = impl_->call("POST", impl_->spreadsheet_url(spreadsheet_id) + "/values:batchUpdate",
+                           detail::serialize_batch_update_values(data, option));
+
+    std::vector<UpdateResult> result;
+    if (doc.HasMember("responses") && doc["responses"].IsArray()) {
+        for (const auto& r : doc["responses"].GetArray())
+            result.push_back(parse_update_result(r));
+    }
+    return result;
 }
 
 UpdateResult SheetsClient::append_values(const std::string& spreadsheet_id,
@@ -184,7 +153,7 @@ UpdateResult SheetsClient::append_values(const std::string& spreadsheet_id,
                            impl_->spreadsheet_url(spreadsheet_id) + "/values/" +
                                impl_->api.escape(range) + ":append?valueInputOption=" +
                                to_string(option) + "&insertDataOption=INSERT_ROWS",
-                           serialize_value_range(range, values));
+                           detail::serialize_value_range(range, values));
     if (doc.HasMember("updates"))
         return parse_update_result(doc["updates"]);
     return {};
@@ -195,6 +164,35 @@ void SheetsClient::clear_values(const std::string& spreadsheet_id, const std::st
                 impl_->spreadsheet_url(spreadsheet_id) + "/values/" + impl_->api.escape(range) +
                     ":clear",
                 "{}");
+}
+
+SheetProperties SheetsClient::add_sheet(const std::string& spreadsheet_id,
+                                        const std::string& title) {
+    auto doc = impl_->batch_update(spreadsheet_id, detail::serialize_add_sheet(title));
+
+    // {"replies": [{"addSheet": {"properties": {...}}}]}
+    if (doc.HasMember("replies") && doc["replies"].IsArray() && !doc["replies"].Empty()) {
+        const auto& reply = doc["replies"][0];
+        if (reply.IsObject() && reply.HasMember("addSheet") && reply["addSheet"].IsObject() &&
+            reply["addSheet"].HasMember("properties"))
+            return detail::parse_sheet_properties(reply["addSheet"]["properties"]);
+    }
+    throw Error("Sheets API addSheet reply did not include the new sheet's properties");
+}
+
+void SheetsClient::delete_sheet(const std::string& spreadsheet_id, int sheet_id) {
+    impl_->batch_update(spreadsheet_id, detail::serialize_delete_sheet(sheet_id));
+}
+
+void SheetsClient::delete_rows(const std::string& spreadsheet_id, int sheet_id, RowRange rows) {
+    delete_rows(spreadsheet_id, sheet_id, std::vector<RowRange>{rows});
+}
+
+void SheetsClient::delete_rows(const std::string& spreadsheet_id, int sheet_id,
+                               const std::vector<RowRange>& rows) {
+    std::string body = detail::serialize_delete_rows(sheet_id, rows);
+    if (!body.empty())
+        impl_->batch_update(spreadsheet_id, body);
 }
 
 } // namespace gsheetpp

@@ -43,6 +43,7 @@ add_library(gsheetpp
     src/jwt.cpp
     src/service_account_credentials.cpp
     src/sheets_client.cpp
+    src/sheets_json.cpp
 )
 add_library(gsheetpp::gsheetpp ALIAS gsheetpp)
 
