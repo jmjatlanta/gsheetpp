@@ -4,8 +4,10 @@
 
 namespace gsheetpp::test {
 
-// The "GSheet Test" spreadsheet, in the "GoShox" Drive folder.
+// The test spreadsheet: its ID, its name, and the Drive folder it lives in.
 inline constexpr const char* kSpreadsheetId = "1_YuhgBzrhjz6eoAhlvhBnv11m7Z8ACBRjgu1vpe76-E";
+inline constexpr const char* kSpreadsheetName = "GSheet Test";
+inline constexpr const char* kFolderName = "GSheet";
 
 // Service account key (git-ignored). Tests are skipped if it is missing.
 inline constexpr const char* kServiceAccountFile =

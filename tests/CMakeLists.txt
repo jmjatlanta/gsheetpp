@@ -1,8 +1,3 @@
-add_executable(gsheetpp_tests test_main.cpp)
-target_include_directories(gsheetpp_tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
-target_link_libraries(gsheetpp_tests PRIVATE gsheetpp::gsheetpp OpenSSL::Crypto gsheetpp_rapidjson)
-add_test(NAME gsheetpp_tests COMMAND gsheetpp_tests)
-
 # --- Google Test (git submodule) ---------------------------------------------
 
 set(GOOGLETEST_DIR "${PROJECT_SOURCE_DIR}/external/googletest")
@@ -16,6 +11,13 @@ set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
 add_subdirectory("${GOOGLETEST_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/googletest" EXCLUDE_FROM_ALL)
 
 include(GoogleTest)
+
+# Unit tests: offline, no credentials needed. They use internal headers from src/.
+add_executable(gsheetpp_tests unit_test.cpp)
+target_include_directories(gsheetpp_tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
+target_link_libraries(gsheetpp_tests PRIVATE
+    gsheetpp::gsheetpp OpenSSL::Crypto gsheetpp_rapidjson GTest::gtest_main)
+gtest_discover_tests(gsheetpp_tests PROPERTIES LABELS unit)
 
 # Integration tests: these talk to the real Sheets API using the service account
 # key in tests/test_resources (git-ignored). They are skipped if the key is absent.

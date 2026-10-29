@@ -25,13 +25,23 @@ On macOS the build looks up Homebrew's `openssl@3` automatically. Elsewhere, pas
 
 Options: `GSHEETPP_BUILD_EXAMPLES` (ON), `GSHEETPP_BUILD_TESTS` (ON).
 
+### Tests
+
+All tests use Google Test (a git submodule at `external/googletest`). They're labelled for CTest:
+
+- `unit`: offline tests that need no network or credentials (`tests/unit_test.cpp`).
+- `integration`: tests that use the real Google APIs (see below).
+
+```sh
+ctest --test-dir build -L unit
+```
+
 ### Integration tests
 
-`tests/sheet_read_test.cpp` uses Google Test (a git submodule at `external/googletest`) to read a
-real spreadsheet. It reads its credentials from
-`tests/test_resources/service_account_gsheetpp.json`, which is git-ignored and must be supplied
-locally. The test sheet must be shared with that service account. If the file is missing, the
-test is skipped.
+`tests/sheet_read_test.cpp` and `tests/drive_test.cpp` use a real spreadsheet and Drive folder.
+They read their credentials from `tests/test_resources/service_account_gsheetpp.json`, which is
+git-ignored and must be supplied locally. The test sheet and the `GSheet` folder must be shared
+with that service account. If the file is missing, these tests are skipped.
 
 ```sh
 ctest --test-dir build -L integration --output-on-failure
@@ -70,7 +80,7 @@ auto creds = gsheetpp::ServiceAccountCredentials::from_file(
     {gsheetpp::scopes::kSpreadsheets, gsheetpp::scopes::kDriveMetadataReadOnly});
 gsheetpp::DriveClient drive(creds);
 
-auto folders = drive.find_folders("GoShox");
+auto folders = drive.find_folders("GSheet");
 auto sheets  = drive.find_spreadsheets("GSheet Test", folders.at(0).id);
 gsheetpp::SheetsClient client(creds);
 auto values  = client.get_values(sheets.at(0).id, "A1:B2");
