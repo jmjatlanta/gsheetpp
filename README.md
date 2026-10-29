@@ -38,7 +38,8 @@ ctest --test-dir build -L unit
 
 ### Integration tests
 
-`tests/sheet_read_test.cpp` and `tests/drive_test.cpp` use a real spreadsheet and Drive folder.
+`tests/sheet_read_test.cpp`, `tests/sheet_edit_test.cpp` and `tests/drive_test.cpp` use a real
+spreadsheet and Drive folder. `sheet_edit_test.cpp` works in temporary sheets that it deletes afterwards.
 They read their credentials from `tests/test_resources/service_account_gsheetpp.json`, which is
 git-ignored and must be supplied locally. The test sheet and the `GSheet` folder must be shared
 with that service account. If the file is missing, these tests are skipped.
@@ -67,6 +68,41 @@ auto meta   = client.get_spreadsheet(spreadsheet_id);
 auto values = client.get_values(spreadsheet_id, "Sheet1!A1:C10");
 client.update_values(spreadsheet_id, "Sheet1!A1", {{"Name", "Score"}, {"Ada", "42"}});
 client.append_values(spreadsheet_id, "Sheet1!A:B", {{"Grace", "99"}});
+```
+
+Reads return cells as displayed in the UI by default. To get the underlying values, for
+example numbers without thousands separators, pass a render option:
+
+```cpp
+auto raw = client.get_values(spreadsheet_id, "Sheet1!A1:C10",
+                             gsheetpp::ValueRenderOption::Unformatted,
+                             gsheetpp::DateTimeRenderOption::FormattedString);
+```
+
+To write several ranges in one request:
+
+```cpp
+client.batch_update_values(spreadsheet_id, {{"Sheet1!A2", {{"Ada", "43"}}},
+                                            {"Sheet1!A9", {{"Grace", "100"}}}});
+```
+
+### Adding and deleting sheets and rows
+
+These calls take a sheet's numeric ID (`SheetProperties::sheet_id`), not its title.
+`Spreadsheet::find_sheet()` looks up a sheet by title:
+
+```cpp
+auto sheet = client.add_sheet(spreadsheet_id, "Orders");  // throws HttpError if it exists
+
+auto meta = client.get_spreadsheet(spreadsheet_id);
+if (const auto* orders = meta.find_sheet("Orders")) {
+    // Rows are numbered from 0 and the end is exclusive: this deletes UI rows 2 to 10.
+    client.delete_rows(spreadsheet_id, orders->sheet_id, gsheetpp::RowRange{1, 10});
+    // Several blocks in one request; each refers to the row numbers before any deletion.
+    client.delete_rows(spreadsheet_id, orders->sheet_id, {{1, 2}, {5, 7}});
+}
+
+client.delete_sheet(spreadsheet_id, sheet.sheet_id);
 ```
 
 ### Finding spreadsheets by name
